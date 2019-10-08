@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+    <flow name="ayub-createPortfolioFlow">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/createPortfolio" allowedMethods="POST" doc:name="HTTP"/>
+        <dw:transform-message doc:name="Transform Message" metadata:id="c09c1b7f-4a2c-4c44-becf-fd172430fff1">
+            <dw:input-payload doc:sample="C:\Users\Admin\Downloads\createPortfolio.json"/>
+            <dw:set-variable variableName="validity"><![CDATA[%dw 1.0
+%output application/java
+---
+{
+	valid_portfolioName: payload.portfolioName != null
+		and payload.portfolioName != "",
+	valid_clientRequestId: payload.clientRequestId != null
+		and payload.clientRequestId != "",
+	valid_criteria: payload.criteria map (cr, indexOfCr) -> {
+		name: cr.name != null and cr.name != "",
+		valueType: cr.valueType == "StringList" or 
+		    cr.valueType == "IntegerRange",
+		selectedValue: cr.selectedValue != null
+			and cr.selectedValue != ""
+	}
+}]]></dw:set-variable>
+        </dw:transform-message>
+        <choice doc:name="Choice">
+            <when expression="(flowVars.validity.valid_portfolioName == false) || (flowVars.validity.valid_clientRequestId == false) || (flowVars.validity.valid_criteria.selectedValue == false)">
+                <logger message="INVALID Request, validity = #[flowVars.validity]" level="INFO" doc:name="Logger INVALID"/>
+            </when>
+            <otherwise>
+                <logger message="VALID, validity = #[flowVars.validity]" level="INFO" doc:name="Logger VALID"/>
+            </otherwise>
+        </choice>
+    </flow>
+</mule>

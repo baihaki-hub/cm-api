@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking"
+	xmlns:batch="http://www.mulesoft.org/schema/mule/batch" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata"
+	xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+	<http:listener-config name="HTTP_Listener_Configuration"
+		host="0.0.0.0" port="8081" basePath="cmAPI" doc:name="HTTP Listener Configuration" />
+	<db:generic-config name="Generic_Database_Configuration"
+		url="jdbc:postgresql://localhost:5432/cm_db?user=hcms&amp;password=hcmsP@ssw0rd%$#@!"
+		driverClassName="org.postgresql.Driver" doc:name="Generic Database Configuration" />
+	<asynchronous-processing-strategy
+		name="Asynchronous_Processing_Strategy" doc:name="Asynchronous Processing Strategy" />
+	<flow name="cm-apiFlow-getIdentity">
+		<http:listener config-ref="HTTP_Listener_Configuration"
+			path="/getIdentity" allowedMethods="GET" doc:name="HTTP" />
+		<db:select config-ref="Generic_Database_Configuration"
+			doc:name="Database Select Identity">
+			<db:parameterized-query><![CDATA[SELECT * FROM cm_identity]]></db:parameterized-query>
+		</db:select>
+		<dw:transform-message doc:name="Transform Message">
+			<dw:set-variable variableName="identity_id"><![CDATA[%dw 1.0
+%output application/java
+---
+payload.id]]></dw:set-variable>
+			<dw:set-variable variableName="identityList"><![CDATA[%dw 1.0
+%output application/java
+---
+payload]]></dw:set-variable>
+		</dw:transform-message>
+		<logger
+			message="payload: \n #[message.payload.toString()] \n\n identity_id: #[flowVars.identity_id] \n\n identityList: #[flowVars.identityList.toString()]"
+			level="INFO" doc:name="Logger" />
+		<foreach doc:name="For Each identity_id" collection="#[flowVars.identity_id]"
+			counterVariableName="index">
+			<enricher target="#[flowVars.address]" doc:name="Message Enricher Addr">
+				<db:select config-ref="Generic_Database_Configuration"
+					doc:name="Database Select Address">
+                    <db:parameterized-query><![CDATA[select A.*, B.text as type from cm_addr A
+join cm_addr_type B on A.addr_type = B.id
+where A.id in (select addr_id from cm_identity_addr where identity_id=#[flowVars.identity_id[index-1]])]]></db:parameterized-query>
+				</db:select>
+			</enricher>
+			<enricher target="#[flowVars.communication]" doc:name="Message Enricher Comm">
+				<db:select config-ref="Generic_Database_Configuration"
+					doc:name="Database Select Comm">
+					<db:parameterized-query><![CDATA[select A.*, B.text as type from cm_comm A
+join cm_comm_type B on A.comm_type = B.id
+where A.id in (select comm_id from cm_identity_comm where identity_id=#[flowVars.identity_id[index-1]])]]></db:parameterized-query>
+				</db:select>
+			</enricher>
+			<dw:transform-message doc:name="Transform Message">
+				<dw:set-variable variableName="contactList"><![CDATA[%dw 1.0
+%output application/java
+---
+[{
+    Identification : flowVars.identityList[(flowVars.index)-1],
+    Address : flowVars.address,
+    Communication : flowVars.communication
+}]
+when flowVars.index == 1 otherwise
+flowVars.contactList ++ 
+[{
+    Identification : flowVars.identityList[(flowVars.index)-1],
+    Address : flowVars.address,
+    Communication : flowVars.communication
+}]]]></dw:set-variable>
+			</dw:transform-message>
+			<logger
+				message="Payload==\\n #[message.payload.toString()]  \\n\\n identity_id==\\n #[flowVars.identity_id[index-1]] \\n\\n index==\\n #[flowVars.index] \\n\\n Address==\\n #[flowVars.address.toString()] \\n\\n contactList= \\n #[flowVars.contactList]"
+				level="INFO" doc:name="Logger" />
+
+		</foreach>
+		<set-payload value="#[flowVars.contactList]" doc:name="Set Payload" />
+		<json:object-to-json-transformer
+			doc:name="Object to JSON" />
+        <set-payload value="{ &quot;applicationID&quot;: &quot;MyApp&quot;, &quot;authn&quot;: {&quot;client_id&quot;: &quot;REDCROSS_24BDE81B&quot;, &quot;client_secret&quot;: &quot;MgSECRET&quot;} }"  doc:name="Set Payload" mimeType="application/json"/>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-variable variableName="payloadToLog"><![CDATA[%dw 1.0
+%output application/java
+---
+{
+	applicationID: payload.applicationID,
+	authn: {
+	  client_id: payload.authn.client_id
+	}
+}]]></dw:set-variable>
+        </dw:transform-message>
+        <logger message="payloadToLog = #[flowVars.payloadToLog]" level="INFO" doc:name="Logger payloadToLog"/>
+
+		<logger
+			message="Payload = #[payload]"
+			level="INFO" doc:name="Logger" />
+		<set-property propertyName="Content-Type" value="application/json"
+			doc:name="Property" />
+
+	</flow>
+	<flow name="cm-apiFlow-getIdentityByID">
+		<http:listener config-ref="HTTP_Listener_Configuration"
+			path="/getIdentity/{ID}" allowedMethods="GET" doc:name="Copy_of_HTTP" />
+		<db:select config-ref="Generic_Database_Configuration"
+			doc:name="Database Select Identity by ID" fetchSize="1">
+            <db:parameterized-query><![CDATA[SELECT * FROM cm_identity WHERE id=#[message.inboundProperties.'http.uri.params'.ID]]]></db:parameterized-query>
+		</db:select>
+		<dw:transform-message doc:name="Copy_of_Transform Message">
+			<dw:set-variable variableName="identity_id"><![CDATA[%dw 1.0
+%output application/java
+---
+payload.id]]></dw:set-variable>
+			<dw:set-variable variableName="identity"><![CDATA[%dw 1.0
+%output application/java
+---
+payload[0]]]></dw:set-variable>
+		</dw:transform-message>
+		<logger
+			message="payload: \n #[message.payload.toString()] \n\n identity_id: #[flowVars.identity_id] \n\n identity: #[flowVars.identity]"
+			level="INFO" doc:name="Copy_of_Logger" />
+			<enricher target="#[flowVars.address]" doc:name="Copy_of_Message Enricher Addr">
+				<db:select config-ref="Generic_Database_Configuration"
+					doc:name="Copy_of_Database Select Address">
+                <db:parameterized-query><![CDATA[select A.*, B.text as type from cm_addr A
+join cm_addr_type B on A.addr_type = B.id
+where A.id in (select addr_id from cm_identity_addr where identity_id=#[payload[0].id])]]></db:parameterized-query>
+
+				</db:select>
+			</enricher>
+			<enricher target="#[flowVars.communication]" doc:name="Copy_of_Message Enricher Comm">
+				<db:select config-ref="Generic_Database_Configuration"
+					doc:name="Copy_of_Database Select Comm">
+                <db:parameterized-query><![CDATA[select A.*, B.text as type from cm_comm A
+join cm_comm_type B on A.comm_type = B.id
+where A.id in (select comm_id from cm_identity_comm where identity_id=#[flowVars.identity_id[0]])]]></db:parameterized-query>
+
+				</db:select>
+			</enricher>
+			<dw:transform-message doc:name="Copy_of_Transform Message">
+				<dw:set-variable variableName="contact"><![CDATA[%dw 1.0
+%output application/java
+---
+{
+    Identification : payload[0],
+    Address : flowVars.address,
+    Communication : flowVars.communication
+}]]></dw:set-variable>
+			</dw:transform-message>
+			<logger
+				message="Payload==\\n #[message.payload.toString()]  \\n\\n identity_id==\\n #[flowVars.identity_id] \\n\\n Address==\\n #[flowVars.address.toString()] \\n\\n contact = \\n #[flowVars.contact]"
+				level="INFO" doc:name="Copy_of_Logger" />
+		<set-payload value="#[flowVars.contact]" doc:name="Copy_of_Set Payload" />
+		<json:object-to-json-transformer
+			doc:name="Copy_of_Object to JSON" />
+		<logger
+			message="Responding getIdentity --- Payload==\\n #[payload.toString()]"
+			level="INFO" doc:name="Copy_of_Logger" />
+		<set-property propertyName="Content-Type" value="application/json"
+			doc:name="Copy_of_Property" />
+	</flow>
+</mule>
